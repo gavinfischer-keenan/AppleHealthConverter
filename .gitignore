@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.suo
+
+# Output data (never commit health data)
+**/converted/
+*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

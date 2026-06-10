@@ -1,0 +1,4 @@
+# Apple Health → CSV Converter
+# No third-party packages required at runtime (all stdlib).
+# Build-time only:
+pyinstaller>=6.0
