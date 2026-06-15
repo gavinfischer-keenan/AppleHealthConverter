@@ -31,7 +31,7 @@ TEXT_MUTED     = "#48484a"
 BORDER         = "#2c2c2e"
 FONT_FAMILY    = "Segoe UI"
 
-APP_VERSION    = "1.2.0"
+APP_VERSION    = "1.3.0"
 APP_TITLE      = "Apple Health → CSV Converter"
 
 
@@ -293,6 +293,21 @@ class AppleHealthConverter(tk.Tk):
         )
         self._month6_btn.pack(side="left", fill="x", expand=True)
 
+        # Select Topics Checkbox
+        self._select_topics_var = tk.BooleanVar(value=False)
+        self._select_topics_chk = tk.Checkbutton(
+            self,
+            text="Let me select specific topics before exporting",
+            variable=self._select_topics_var,
+            font=(FONT_FAMILY, 9),
+            bg=BG_DARK,
+            fg=TEXT_SECONDARY,
+            selectcolor=BG_DARK,
+            activebackground=BG_DARK,
+            activeforeground=TEXT_SECONDARY,
+        )
+        self._select_topics_chk.pack(anchor="w", padx=28, pady=(8, 0))
+
         # Mode description label
         self._mode_desc_var = tk.StringVar(value="")
         tk.Label(
@@ -528,7 +543,10 @@ class AppleHealthConverter(tk.Tk):
         elif mode == "6mo":
             self._month6_btn.configure(text="Extracting…")
 
-        t = threading.Thread(target=self._run_conversion, args=(mode,), daemon=True)
+        if self._select_topics_var.get():
+            t = threading.Thread(target=self._run_prescan, args=(mode,), daemon=True)
+        else:
+            t = threading.Thread(target=self._run_conversion, args=(mode, None), daemon=True)
         t.start()
         self._tick_elapsed()
 
@@ -539,7 +557,147 @@ class AppleHealthConverter(tk.Tk):
             self._elapsed_var.set(f"Elapsed: {m:02d}:{s:02d}")
             self.after(1000, self._tick_elapsed)
 
-    def _run_conversion(self, mode: str):
+    def _run_prescan(self, mode: str):
+        try:
+            from parser import prescan_topics
+            
+            folder = self._selected_folder
+            if mode == "full":
+                start_date = None
+            else:
+                if mode == "1mo": months = 1
+                elif mode == "2mo": months = 2
+                elif mode == "3mo": months = 3
+                else: months = 6
+                start_date = _months_ago(months)
+
+            self.after(0, lambda: self._status_var.set(
+                "Scanning file for available topics (this may take a few minutes)..."
+            ))
+
+            def on_progress(count, _):
+                self.after(0, lambda: self._status_var.set(f"Scanning records: {count:,}..."))
+                
+            def cancel_check():
+                return self._cancel_requested
+
+            topics = prescan_topics(
+                export_folder=folder,
+                start_date=start_date,
+                progress_callback=on_progress,
+                cancel_check=cancel_check
+            )
+            
+            if self._cancel_requested:
+                self.after(0, lambda: self._on_error("Cancelled by user"))
+                return
+
+            if not topics:
+                self.after(0, lambda: self._on_error("No topics found in the selected date range."))
+                return
+
+            self.after(0, lambda: self._show_topic_selection(topics, mode))
+            
+        except Exception as e:
+            import traceback
+            self.after(0, lambda: self._on_error(f"Prescan error: {e}"))
+
+    def _show_topic_selection(self, topics: list, mode: str):
+        # Stop the spinning progress bar while they select
+        self._progress_bar.stop()
+        self._progress_bar.configure(mode="determinate")
+        self._progress_var.set(100)
+        self._status_var.set("Please select topics in the popup window...")
+
+        top = tk.Toplevel(self)
+        top.title("Select Topics to Export")
+        top.configure(bg=BG_DARK)
+        top.geometry("400x500")
+        top.transient(self)
+        top.grab_set()
+
+        # Center top relative to main window
+        top.geometry(f"+{self.winfo_x() + 140}+{self.winfo_y() + 90}")
+
+        tk.Label(top, text="Select topics to include:", font=(FONT_FAMILY, 10, "bold"), bg=BG_DARK, fg=TEXT_PRIMARY).pack(pady=10)
+
+        # Buttons
+        btn_frame = tk.Frame(top, bg=BG_DARK)
+        btn_frame.pack(fill="x", padx=10, pady=5)
+        
+        def select_all():
+            for var in var_dict.values(): var.set(True)
+        def select_none():
+            for var in var_dict.values(): var.set(False)
+
+        tk.Button(btn_frame, text="Select All", command=select_all, bg=BG_CARD2, fg=TEXT_PRIMARY, relief="flat").pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Select None", command=select_none, bg=BG_CARD2, fg=TEXT_PRIMARY, relief="flat").pack(side="left", padx=5)
+
+        # Canvas with scrollbar
+        frame_canvas = tk.Frame(top, bg=BG_DARK)
+        frame_canvas.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        canvas = tk.Canvas(frame_canvas, bg=BG_CARD, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame_canvas, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG_CARD)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        var_dict = {}
+        for t in topics:
+            var = tk.BooleanVar(value=True)
+            var_dict[t] = var
+            clean_name = t.replace("HKQuantityTypeIdentifier", "").replace("HKCategoryTypeIdentifier", "")
+            chk = tk.Checkbutton(
+                scrollable_frame, text=clean_name, variable=var,
+                bg=BG_CARD, fg=TEXT_PRIMARY, selectcolor=BG_CARD,
+                activebackground=BG_CARD, activeforeground=TEXT_PRIMARY
+            )
+            chk.pack(anchor="w", padx=5, pady=2)
+
+        def confirm():
+            selected = {t for t, v in var_dict.items() if v.get()}
+            top.destroy()
+            if not selected:
+                self._on_error("No topics selected.")
+                return
+            
+            # Restart progress bar and continue
+            self._progress_bar.configure(mode="indeterminate")
+            self._progress_bar.start(12)
+            self._status_var.set("Starting conversion...")
+            
+            # Re-fetch mode text for buttons
+            mode_lbl = "Converting..." if mode == "full" else "Extracting..."
+            if mode == "full": self._convert_btn.configure(text=mode_lbl)
+            elif mode == "1mo": self._month1_btn.configure(text=mode_lbl)
+            elif mode == "2mo": self._month2_btn.configure(text=mode_lbl)
+            elif mode == "3mo": self._month3_btn.configure(text=mode_lbl)
+            elif mode == "6mo": self._month6_btn.configure(text=mode_lbl)
+
+            t_conv = threading.Thread(target=self._run_conversion, args=(mode, selected), daemon=True)
+            t_conv.start()
+
+        def cancel():
+            top.destroy()
+            self._on_error("Topic selection cancelled.")
+
+        btn_confirm = tk.Frame(top, bg=BG_DARK)
+        btn_confirm.pack(fill="x", pady=10)
+        tk.Button(btn_confirm, text="Continue Export", font=(FONT_FAMILY, 10, "bold"), bg=ACCENT2, fg="white", command=confirm, relief="flat", padx=10, pady=5).pack(side="right", padx=10)
+        tk.Button(btn_confirm, text="Cancel", bg=BG_CARD2, fg=TEXT_PRIMARY, command=cancel, relief="flat", padx=10, pady=5).pack(side="right", padx=10)
+
+        top.protocol("WM_DELETE_WINDOW", cancel)
+
+    def _run_conversion(self, mode: str, allowed_topics: set = None):
         try:
             from writers import OutputManager, QuickExportManager
             from parser import parse_export
@@ -578,6 +736,7 @@ class AppleHealthConverter(tk.Tk):
                 progress_callback=on_progress,
                 cancel_check=cancel_check,
                 start_date=start_date,
+                allowed_topics=allowed_topics,
             )
 
             self.after(0, lambda: self._status_var.set("Finalizing CSV files…"))

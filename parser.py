@@ -78,12 +78,91 @@ def _flatten_metadata(elem) -> dict:
     return meta
 
 
+def prescan_topics(
+    export_folder: Path,
+    start_date: Optional[datetime] = None,
+    progress_callback: Optional[ProgressCallback] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+) -> list:
+    """
+    Scan the export.xml file without writing anything, to find all unique topic types.
+    """
+    xml_path = export_folder / "export.xml"
+    if not xml_path.exists():
+        raise FileNotFoundError(f"export.xml not found in {export_folder}")
+
+    found_topics = set()
+    record_count = 0
+    PROGRESS_INTERVAL = 5000
+
+    def _in_range(date_str: str) -> bool:
+        if start_date is None:
+            return True
+        dt = _parse_date(date_str)
+        if dt is None:
+            return True
+        return dt >= start_date
+
+    try:
+        source = _clean_stream(xml_path)
+
+        class LineIterSource:
+            def __init__(self, gen):
+                self._gen = gen
+                self._buf = b""
+            def read(self, size=-1):
+                if size == -1: return b"".join(self._gen)
+                while len(self._buf) < size:
+                    try: self._buf += next(self._gen)
+                    except StopIteration: break
+                chunk, self._buf = self._buf[:size], self._buf[size:]
+                return chunk
+
+        context = ET.iterparse(LineIterSource(source), events=("start", "end"))
+        current_workout_in_range = True
+
+        for event, elem in context:
+            if cancel_check and cancel_check():
+                break
+
+            try:
+                if event == "start":
+                    if elem.tag == "Workout":
+                        current_workout_in_range = _in_range(elem.attrib.get("startDate", ""))
+                elif event == "end":
+                    tag = elem.tag
+                    if tag == "Record":
+                        if _in_range(elem.attrib.get("startDate", "")):
+                            found_topics.add(elem.attrib.get("type", "Unknown"))
+                        record_count += 1
+                        if record_count % PROGRESS_INTERVAL == 0 and progress_callback:
+                            progress_callback(record_count, "Scanning...")
+
+                    elif tag == "Workout":
+                        if current_workout_in_range:
+                            found_topics.add("HKWorkout")
+
+                    elif tag == "ActivitySummary":
+                        if _in_range(elem.attrib.get("dateComponents", "")):
+                            found_topics.add("HKActivitySummary")
+
+                    elem.clear()
+
+            except Exception:
+                pass
+    except ET.ParseError as e:
+        raise RuntimeError(f"XML parse error in export.xml: {e}")
+
+    return sorted(list(found_topics))
+
+
 def parse_export(
     export_folder: Path,
     output_manager,
     progress_callback: Optional[ProgressCallback] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
     start_date: Optional[datetime] = None,
+    allowed_topics: Optional[set] = None,
 ) -> dict:
     """
     Stream-parse the export.xml file and write output via output_manager.
@@ -180,8 +259,10 @@ def parse_export(
 
                     elif tag == "Record":
                         row = dict(elem.attrib)
-                        # ── Date filter ──
+                        # ── Date & Topic filter ──
                         if not _in_range(row.get("startDate", "")):
+                            stats["skipped"] += 1
+                        elif allowed_topics is not None and row.get("type", "") not in allowed_topics:
                             stats["skipped"] += 1
                         else:
                             output_manager.write_record(row)
@@ -197,7 +278,7 @@ def parse_export(
                                     )
 
                     elif tag == "Workout":
-                        if current_workout_in_range:
+                        if current_workout_in_range and (allowed_topics is None or "HKWorkout" in allowed_topics):
                             row = dict(elem.attrib)
                             row.update(_flatten_metadata(elem))
                             output_manager.write_workout(row)
@@ -208,7 +289,7 @@ def parse_export(
                         current_workout_in_range = True
 
                     elif tag == "WorkoutStatistics":
-                        if current_workout_in_range:
+                        if current_workout_in_range and (allowed_topics is None or "HKWorkout" in allowed_topics):
                             row = dict(elem.attrib)
                             if current_workout:
                                 row["workout_startDate"] = current_workout.get("startDate", "")
@@ -220,7 +301,7 @@ def parse_export(
                     elif tag == "ActivitySummary":
                         row = dict(elem.attrib)
                         # ActivitySummary uses dateComponents (YYYY-MM-DD)
-                        if _in_range(row.get("dateComponents", "")):
+                        if _in_range(row.get("dateComponents", "")) and (allowed_topics is None or "HKActivitySummary" in allowed_topics):
                             output_manager.write_activity_summary(row)
                             stats["activity_summaries"] += 1
                         else:
