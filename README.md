@@ -9,14 +9,14 @@ A standalone Windows desktop application that converts a large Apple Health expo
 ## 📸 In Action
 
 ### Simple, 1-Click Interface
-Just point it at your `apple_health_export` folder and click Convert. The tool streams through gigabytes of XML data without locking up your machine.
+Just point it at your `apple_health_export` folder, choose a timeframe, and optionally select topics. The tool streams through gigabytes of XML data without locking up your machine.
 
-![Apple Health Converter GUI](assets/app_gui.png)
+![Apple Health Converter GUI](assets/app_gui_v1_3.png)
 
-### The Output: Clean, Granular CSVs
-Instead of one unmanageable 10-million-row file, you get one clean CSV per health metric type. Perfect for importing straight into Excel, Python, or Gemini.
+### Pick Exactly What You Need
+Select specific health topics before exporting to keep your CSV data clean and laser-focused on what you actually care about.
 
-![Generated CSV Files](assets/csv_output.png)
+![Topic Selection Modal](assets/topic_selection.png)
 
 ---
 
