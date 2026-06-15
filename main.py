@@ -2,7 +2,8 @@
 main.py — Apple Health Export → CSV Converter  v1.1
 A standalone Windows desktop application.
 
-v1.1 additions:
+v1.2 additions:
+  - "Last 3 Months" and "Last 6 Months" quick-export buttons
   - "Last 1 Month" and "Last 2 Months" quick-export buttons
   - All output files auto-split at 10 MB into part1, part2, …
 """
@@ -30,7 +31,7 @@ TEXT_MUTED     = "#48484a"
 BORDER         = "#2c2c2e"
 FONT_FAMILY    = "Segoe UI"
 
-APP_VERSION    = "1.1.0"
+APP_VERSION    = "1.2.0"
 APP_TITLE      = "Apple Health → CSV Converter"
 
 
@@ -62,7 +63,7 @@ class AppleHealthConverter(tk.Tk):
         self.resizable(False, False)
 
         # Center window (slightly taller for the new button row)
-        w, h = 680, 680
+        w, h = 680, 740
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         x = (sw - w) // 2
@@ -212,12 +213,12 @@ class AppleHealthConverter(tk.Tk):
         )
         self._convert_btn.pack(side="left", fill="x", expand=True)
 
-        # Spacer
-        tk.Frame(btn_row, bg=BG_DARK, width=8).pack(side="left")
+        btn_row_2 = tk.Frame(self, bg=BG_DARK)
+        btn_row_2.pack(fill="x", padx=28, pady=(0, 4))
 
         # Last 1 Month button
         self._month1_btn = tk.Button(
-            btn_row,
+            btn_row_2,
             text="📅  Last 1 Month",
             font=(FONT_FAMILY, 11, "bold"),
             bg=ACCENT_ORANGE,
@@ -233,11 +234,11 @@ class AppleHealthConverter(tk.Tk):
         self._month1_btn.pack(side="left", fill="x", expand=True)
 
         # Spacer
-        tk.Frame(btn_row, bg=BG_DARK, width=8).pack(side="left")
+        tk.Frame(btn_row_2, bg=BG_DARK, width=8).pack(side="left")
 
         # Last 2 Months button
         self._month2_btn = tk.Button(
-            btn_row,
+            btn_row_2,
             text="📅  Last 2 Months",
             font=(FONT_FAMILY, 11, "bold"),
             bg=ACCENT_ORANGE,
@@ -251,6 +252,46 @@ class AppleHealthConverter(tk.Tk):
             command=lambda: self._start_conversion(mode="2mo"),
         )
         self._month2_btn.pack(side="left", fill="x", expand=True)
+
+        btn_row_3 = tk.Frame(self, bg=BG_DARK)
+        btn_row_3.pack(fill="x", padx=28, pady=(0, 4))
+
+        # Last 3 Months button
+        self._month3_btn = tk.Button(
+            btn_row_3,
+            text="📅  Last 3 Months",
+            font=(FONT_FAMILY, 11, "bold"),
+            bg=ACCENT_ORANGE,
+            fg="white",
+            activebackground="#cc7d08",
+            activeforeground="white",
+            relief="flat",
+            cursor="hand2",
+            padx=0, pady=13, bd=0,
+            state="disabled",
+            command=lambda: self._start_conversion(mode="3mo"),
+        )
+        self._month3_btn.pack(side="left", fill="x", expand=True)
+
+        # Spacer
+        tk.Frame(btn_row_3, bg=BG_DARK, width=8).pack(side="left")
+
+        # Last 6 Months button
+        self._month6_btn = tk.Button(
+            btn_row_3,
+            text="📅  Last 6 Months",
+            font=(FONT_FAMILY, 11, "bold"),
+            bg=ACCENT_ORANGE,
+            fg="white",
+            activebackground="#cc7d08",
+            activeforeground="white",
+            relief="flat",
+            cursor="hand2",
+            padx=0, pady=13, bd=0,
+            state="disabled",
+            command=lambda: self._start_conversion(mode="6mo"),
+        )
+        self._month6_btn.pack(side="left", fill="x", expand=True)
 
         # Mode description label
         self._mode_desc_var = tk.StringVar(value="")
@@ -439,13 +480,15 @@ class AppleHealthConverter(tk.Tk):
         self._status_var.set("Ready — choose an export mode above.")
         self._mode_desc_var.set(
             "Full Export: all data, one CSV per metric type  ·  "
-            "Last 1/2 Months: everything in one combined CSV, Gemini-ready"
+            "Quick Export: everything in one combined CSV, Gemini-ready"
         )
 
     def _set_buttons(self, state: str):
         self._convert_btn.configure(state=state)
         self._month1_btn.configure(state=state)
         self._month2_btn.configure(state=state)
+        self._month3_btn.configure(state=state)
+        self._month6_btn.configure(state=state)
 
     def _start_conversion(self, mode: str):
         if self._running or not self._selected_folder:
@@ -471,6 +514,8 @@ class AppleHealthConverter(tk.Tk):
             "full": ("⚡  Full Export", "Converting full export…"),
             "1mo":  ("📅  Last 1 Month", "Extracting last 1 month…"),
             "2mo":  ("📅  Last 2 Months", "Extracting last 2 months…"),
+            "3mo":  ("📅  Last 3 Months", "Extracting last 3 months…"),
+            "6mo":  ("📅  Last 6 Months", "Extracting last 6 months…"),
         }
         lbl, converting_text = labels.get(mode, ("⚡  Full Export", "Converting…"))
         self._convert_btn.configure(text="Converting…" if mode == "full" else "⚡  Full Export")
@@ -478,6 +523,10 @@ class AppleHealthConverter(tk.Tk):
             self._month1_btn.configure(text="Extracting…")
         elif mode == "2mo":
             self._month2_btn.configure(text="Extracting…")
+        elif mode == "3mo":
+            self._month3_btn.configure(text="Extracting…")
+        elif mode == "6mo":
+            self._month6_btn.configure(text="Extracting…")
 
         t = threading.Thread(target=self._run_conversion, args=(mode,), daemon=True)
         t.start()
@@ -504,7 +553,10 @@ class AppleHealthConverter(tk.Tk):
                     "Parsing export.xml — this may take several minutes for large exports…"
                 ))
             else:
-                months = 1 if mode == "1mo" else 2
+                if mode == "1mo": months = 1
+                elif mode == "2mo": months = 2
+                elif mode == "3mo": months = 3
+                else: months = 6
                 output_mgr = QuickExportManager(folder, months)
                 start_date = _months_ago(months)
                 self.after(0, lambda: self._status_var.set(
@@ -577,7 +629,10 @@ class AppleHealthConverter(tk.Tk):
             out_dir = out_path.parent
             self._output_var.set(f"Output folder: {out_dir}\nOne CSV per metric type + summary.")
         else:
-            months = 1 if mode == "1mo" else 2
+            if mode == "1mo": months = 1
+            elif mode == "2mo": months = 2
+            elif mode == "3mo": months = 3
+            else: months = 6
             parts = getattr(mgr, "part_count", 1)
             files_str = (
                 f"{parts} files (auto-split at 10 MB)" if parts > 1
@@ -602,6 +657,8 @@ class AppleHealthConverter(tk.Tk):
         self._convert_btn.configure(state="normal", text="⚡  Full Export")
         self._month1_btn.configure(state="normal", text="📅  Last 1 Month")
         self._month2_btn.configure(state="normal", text="📅  Last 2 Months")
+        self._month3_btn.configure(state="normal", text="📅  Last 3 Months")
+        self._month6_btn.configure(state="normal", text="📅  Last 6 Months")
 
     def _on_error(self, message: str):
         self._running = False
@@ -616,6 +673,8 @@ class AppleHealthConverter(tk.Tk):
         self._convert_btn.configure(state="normal", text="⚡  Full Export")
         self._month1_btn.configure(state="normal", text="📅  Last 1 Month")
         self._month2_btn.configure(state="normal", text="📅  Last 2 Months")
+        self._month3_btn.configure(state="normal", text="📅  Last 3 Months")
+        self._month6_btn.configure(state="normal", text="📅  Last 6 Months")
 
         messagebox.showerror(
             "Conversion Error",
